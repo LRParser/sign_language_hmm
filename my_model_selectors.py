@@ -104,5 +104,46 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        word_sequences = self.sequences
+        num_splits = 2
+        split_method = KFold(n_splits=self.min_n_components)
+        best_model = None
+        best_num_components = 0
+
+        # The
+        best_score = float("-inf")
+
+        for i in range(self.min_n_components,self.max_n_components) :
+
+            total_score = 0
+
+
+            for cv_train_idx, cv_test_idx in split_method.split(word_sequences):
+                print("Train fold indices:{} Test fold indices:{}".format(cv_train_idx,
+                                                                          cv_test_idx))  # view indices of the folds
+
+                X, X_lengths = combine_sequences(cv_train_idx,word_sequences)
+                Y, Y_lengths = combine_sequences(cv_test_idx,word_sequences)
+
+                try :
+
+                    hmm_model = GaussianHMM(n_components=i, covariance_type="diag", n_iter=1000,
+                                            random_state=self.random_state, verbose=False).fit(X, X_lengths)
+
+                    logL = hmm_model.score(Y, Y_lengths)
+                    total_score = total_score + logL
+
+                except :
+                    return None
+
+            avg_score = total_score / num_splits
+            print("avg_score of {} for model with {} components".format(avg_score, i))
+
+            if avg_score > best_score :
+                best_score = avg_score
+                best_model = hmm_model
+                best_num_components = i
+
+        print("Best score of {} for model with {} components".format(best_score,best_num_components))
+
+        return best_model
