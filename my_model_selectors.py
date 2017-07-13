@@ -79,9 +79,6 @@ class SelectorBIC(ModelSelector):
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        word_sequences = self.sequences
-        num_splits = self.min_n_components
-        split_method = KFold(n_splits=num_splits)
         best_model = None
         best_num_components = 0
 
@@ -90,35 +87,27 @@ class SelectorBIC(ModelSelector):
 
         for i in range(self.min_n_components,self.max_n_components) :
 
-            total_score = 0
+            if i >= self.lengths[0] :
+                continue
 
+            try :
 
-            for cv_train_idx, cv_test_idx in split_method.split(word_sequences):
-                print("Train fold indices:{} Test fold indices:{}".format(cv_train_idx,
-                                                                          cv_test_idx))  # view indices of the folds
+                hmm_model = GaussianHMM(n_components=i, covariance_type="diag", n_iter=1000,
+                                        random_state=self.random_state, verbose=False).fit(self.X, self.lengths)
 
-                X, X_lengths = combine_sequences(cv_train_idx,word_sequences)
-                Y, Y_lengths = combine_sequences(cv_test_idx,word_sequences)
+                logL = hmm_model.score(self.X, self.lengths)
+                p = i
+                N = len(self.lengths)
+                bic_score = -2 * logL + p * math.log(N)
 
-                try :
+            except Exception as e:
+                print(e)
+                return None
 
-                    hmm_model = GaussianHMM(n_components=i, covariance_type="diag", n_iter=1000,
-                                            random_state=self.random_state, verbose=False).fit(X, X_lengths)
+            print("score of {} for model with {} components".format(bic_score, i))
 
-                    logL = hmm_model.score(Y, Y_lengths)
-                    p = i
-                    N = len(cv_train_idx)
-                    bic_score = -2 * logL + p * math.log(N)
-                    total_score = total_score + bic_score
-
-                except :
-                    return None
-
-            avg_score = total_score / num_splits
-            print("avg_score of {} for model with {} components".format(avg_score, i))
-
-            if avg_score < best_score :
-                best_score = avg_score
+            if bic_score < best_score :
+                best_score = bic_score
                 best_model = hmm_model
                 best_num_components = i
 
@@ -139,7 +128,67 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        # Question to reviewer - Should we look at discriminitive capacity of some number of states vs other number of states, or of self.this_word vs other words? I think the former but want to clarify
+        num_splits = self.min_n_components
+        split_method = KFold(n_splits=num_splits)
+        best_model = None
+        best_num_components = 0
+
+        # The
+        best_score = float("-inf")
+
+        print("Iterate thru range")
+        for i in range(self.min_n_components, self.max_n_components):
+
+            try:
+
+                if i > self.lengths[0]:
+                    continue
+
+                hmm_model = GaussianHMM(n_components=i, covariance_type="diag", n_iter=1000,
+                                        random_state=self.random_state, verbose=False).fit(self.X, self.lengths)
+
+                # Question to reviewer - it is a bug in HMMLearn that this sometimes returns a negative number as a log probability
+                # https://discussions.udacity.com/t/logl-negative-in-cell-with-chocolate-word/231882/4
+                this_model_score = hmm_model.score(self.X, self.lengths)
+                other_model_scores = 0
+
+                m_count = 0
+                for m in range(self.min_n_components, self.max_n_components) :
+                    if i == m or m > self.lengths[0]:
+                        continue
+
+                    other_hmm_model = GaussianHMM(n_components=m, covariance_type="diag", n_iter=1000,
+                                            random_state=self.random_state, verbose=False).fit(self.X, self.lengths)
+
+
+                    try :
+                        other_hmm_model_score = other_hmm_model.score(self.X,self.lengths)
+                    except Exception as e:
+                        print(e)
+                        print("Scoring of comparative model failed")
+                        # Question to the reviewer - should I penalize an HmmLearn failure by setting other_hmm_model_score to float(-inf) or is 0 more appropriate?
+                        # Example error: rows of transmat_ must sum to 1.0 (got [ 1.  1.  1.  0.  1.  1.  0.  1.  1.])
+                        other_hmm_model_score = 0
+
+                    other_model_scores += other_hmm_model_score
+                    m_count += 1
+
+                # DIC = log(P(X(i)) - 1/(M-1)SUM(log(P(X(all but i))
+
+                dic_score = this_model_score - (1 / m_count) * other_model_scores
+
+                if dic_score > best_score:
+                    best_score = dic_score
+                    best_model = hmm_model
+                    best_num_components = i
+
+            except Exception as e:
+                print("Error for i = {} and m = {}".format(i,m))
+                print(e)
+
+        print("Best score of {} for model with {} components".format(best_score, best_num_components))
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -179,8 +228,9 @@ class SelectorCV(ModelSelector):
                     logL = hmm_model.score(Y, Y_lengths)
                     total_score = total_score + logL
 
-                except :
-                    return None
+                except Exception as e :
+                    print(e)
+                    continue
 
             avg_score = total_score / num_splits
             print("avg_score of {} for model with {} components".format(avg_score, i))
