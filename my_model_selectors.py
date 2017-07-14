@@ -210,6 +210,10 @@ class SelectorCV(ModelSelector):
 
         word_sequences = self.sequences
         num_splits = self.min_n_components
+
+        if(len(word_sequences) < num_splits) :
+            return None
+
         split_method = KFold(n_splits=num_splits)
         best_model = None
         best_num_components = 0
